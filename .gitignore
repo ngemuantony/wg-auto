@@ -1,0 +1,134 @@
+# Environment & Configuration
+.env
+.env.local
+.env.*.local
+*.env
+/env_backup/
+env_backups/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.vim
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.cover
+*.py,cover
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+/media
+/staticfiles
+*.pot
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Database
+*.sql
+*.sql.bak
+*.backup
+pgdata/
+
+# System Files
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*.temp
+
+# Secrets & Credentials
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# OS
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Project Specific
+.celery_beat_schedule
+/static/
+/media/
+instance/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE Generated Files
+.idea/
+*.iml
+out/
+
+# Logs
+logs/
+*.log
+
+# Temporary Files
+tmp/
+temp/
+*.tmp

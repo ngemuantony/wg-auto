@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>WireGuard VPN Access</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .card {
+            max-width: 600px;
+            margin: auto;
+            padding: 20px;
+            border-radius: 8px;
+            background: #f9fafb;
+        }
+        .qr {
+            text-align: center;
+            margin: 20px 0;
+        }
+        code {
+            background: #eee;
+            padding: 4px 6px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+<div class="card">
+    <h2>Hello {{ user_name }},</h2>
+
+    <p>Your VPN access has been successfully created.</p>
+
+    <h3>Quick Setup (Mobile)</h3>
+    <div class="qr">
+        <img src="cid:wg_qr_code" alt="WireGuard QR Code">
+        <p>Scan using the WireGuard app</p>
+    </div>
+
+    <h3>Manual Configuration</h3>
+    <p>Your configuration file is attached to this email.</p>
+
+    <h3>Server Details</h3>
+    <ul>
+        <li><strong>Endpoint:</strong> {{ endpoint }}</li>
+        <li><strong>Allowed IPs:</strong> {{ allowed_ips }}</li>
+        <li><strong>DNS:</strong> {{ dns }}</li>
+    </ul>
+
+    <h3>Installation Guide</h3>
+    <pre>{{ guide }}</pre>
+
+    <p style="margin-top: 30px;">
+        If you have any issues, contact the administrator.
+    </p>
+
+    <p>
+        <strong>Stay secure 🔐</strong><br>
+        WireGuard Automation Suite
+    </p>
+</div>
+</body>
+</html>

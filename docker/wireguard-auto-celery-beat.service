@@ -1,0 +1,31 @@
+[Unit]
+Description=WireGuard Auto Celery Beat Scheduler
+After=network.target redis-server.service
+
+[Service]
+Type=simple
+User=tisp
+Group=tisp
+WorkingDirectory=/home/tisp/wg-auto
+Environment="PATH=/home/tisp/wg-auto/venv/bin"
+ExecStart=/home/tisp/wg-auto/venv/bin/celery -A config beat \
+    --loglevel=info \
+    --logfile=/home/tisp/wg-auto/logs/celery-beat.log \
+    --pidfile=/home/tisp/wg-auto/run/celery-beat.pid \
+    --schedule=/home/tisp/wg-auto/run/celerybeat-schedule
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wireguard-celery-beat
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

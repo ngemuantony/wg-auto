@@ -1,0 +1,30 @@
+[Unit]
+Description=WireGuard Auto Celery Worker
+After=network.target redis-server.service
+
+[Service]
+Type=forking
+User=tisp
+Group=tisp
+WorkingDirectory=/home/tisp/wg-auto
+Environment="PATH=/home/tisp/wg-auto/venv/bin"
+ExecStart=/home/tisp/wg-auto/venv/bin/celery -A config worker \
+    --loglevel=info \
+    --logfile=/home/tisp/wg-auto/logs/celery.log \
+    --pidfile=/home/tisp/wg-auto/run/celery.pid
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wireguard-celery
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

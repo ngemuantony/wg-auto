@@ -1,0 +1,29 @@
+[Unit]
+Description=WireGuard Auto Django Application
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=notify
+User=tisp
+Group=www-data
+WorkingDirectory=/home/tisp/wg-auto
+Environment="PATH=/home/tisp/wg-auto/venv/bin"
+ExecStart=/home/tisp/wg-auto/venv/bin/gunicorn \
+    --config /home/tisp/wg-auto/docker/gunicorn.conf.py \
+    config.wsgi:application
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wireguard-auto
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

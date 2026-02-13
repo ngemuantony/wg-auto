@@ -1,0 +1,11 @@
+Django>=4.2
+psycopg2-binary
+redis
+django-redis
+celery
+cryptography
+qrcode[pil]
+pytest
+pytest-django
+python-dotenv
+gunicorn
