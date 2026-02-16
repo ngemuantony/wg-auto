@@ -10,18 +10,17 @@ from .constants import WG_ACTIVE_PEERS_CACHE_KEY, WG_SERVER_CACHE_KEY
 
 @receiver(post_save, sender=WireGuardPeer)
 def trigger_onboarding(sender, instance, created, **kwargs):
-    """Trigger onboarding for newly created peers OR peers without keys."""
-    # Trigger onboarding if this is a NEW peer, OR if peer exists but has no keys
     needs_onboarding = created or (not instance.public_key or instance.public_key.strip() in ('', '-'))
-    
-    if needs_onboarding:
-        from .tasks import onboard_peer
-        try:
-            print(f"[SIGNAL] Triggering onboarding for peer {instance.name} (created={created})", file=sys.stderr)
-            onboard_peer.delay(instance.id)
-        except Exception as e:
-            print(f"[SIGNAL] Warning: Could not trigger onboarding task: {e}", file=sys.stderr)
 
+    if needs_onboarding:
+        from .services.onboarding import onboard
+
+        try:
+            # Run synchronously for debugging / immediate key creation
+            print(f"[SIGNAL] Onboarding peer {instance.name} immediately", file=sys.stderr)
+            onboard(instance.id)  # This will generate keys now
+        except Exception as e:
+            print(f"[SIGNAL] Failed to onboard peer {instance.name}: {e}", file=sys.stderr)
 
 @receiver(post_save, sender=WireGuardPeer)
 def trigger_peer_injection(sender, instance, created, **kwargs):

@@ -15,7 +15,7 @@ class WireGuardServerAdmin(admin.ModelAdmin):
             "fields": ("name", "endpoint", "is_active")
         }),
         ("Network Configuration", {
-            "fields": ("interface", "port", "server_address", "mtu")
+            "fields": ("interface", "uplink_interface", "port", "server_address", "mtu")
         }),
         ("Keys", {
             "fields": ("public_key_display", "private_key_display", "regenerate_keys_button"),

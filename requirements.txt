@@ -1,11 +1,32 @@
-Django>=4.2
-psycopg2-binary
-redis
-django-redis
-celery
-cryptography
-qrcode[pil]
-pytest
-pytest-django
-python-dotenv
-gunicorn
+# Core framework
+Django>=4.2,<5.1
+
+# Database
+psycopg2-binary>=2.9,<3.0
+
+# Redis & caching
+redis>=5.0,<6.0
+django-redis>=5.4,<6.0
+
+# Background tasks
+celery[redis]>=5.3,<6.0
+django-celery-beat>=2.8,<3.0
+supervisor>=4.2,<5.0
+
+
+# Security & crypto
+cryptography>=41,<43
+
+# Utilities
+python-dotenv>=1.0,<2.0
+qrcode[pil]>=7.4,<8.0
+
+# Web server
+gunicorn>=21.2,<23.0
+
+# Admin UI
+django-jazzmin>=3.0,<4.0
+
+# Testing (dev-only, safe to keep)
+pytest>=7.4,<9.0
+pytest-django>=4.5,<5.0

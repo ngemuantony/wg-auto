@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    'django_celery_beat',
     "wireguard",
 ]
 
@@ -166,9 +167,11 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # ── INTERNATIONALIZATION ─────────────────────────────────────────────────────
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+TIME_ZONE = "Africa/Nairobi"
 USE_I18N = True
 USE_TZ = True
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ── STATIC FILES ─────────────────────────────────────────────────────────────
 STATIC_URL = "static/"
@@ -176,3 +179,54 @@ STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
 # Create staticfiles directory if it doesn't exist
 os.makedirs(STATIC_ROOT, exist_ok=True)
+
+# _______________ SECURITY SETTINGS _______________
+CSRF_TRUSTED_ORIGINS = [
+    "https://localhost:8000",
+    "https://127.0.0.1:8000",
+    "https://10.10.10.1:8000",
+    "https://10.10.10.2:8000",
+    "https://10.10.10.3:8000",
+    "https://10.10.10.4:8000",
+    "https://10.10.10.5:8000",
+    "https://10.10.10.6:8000",
+    "https://10.10.10.7:8000",
+    "https://10.10.10.8:8000",
+]
+
+
+
+# _______________ JAZZMIN CONFIGURATION _______________
+JAZZMIN_SETTINGS = {
+    "site_title": "WG Auto Admin",
+    "site_header": "WG Auto Admin",
+    "site_brand": "WG Auto",
+    "welcome_sign": "Welcome to the WG Auto Admin Interface",
+    "copyright": "WIREGUARD AUTO - 2026",
+
+
+    "icons": {
+        "auth": "fas fa-users-cog",
+        "auth.user": "fas fa-user",
+        "auth.group": "fas fa-users",
+        "wireguard.smtpsettings": "fas fa-server",
+        "wireguard.wireguardpeer": "fas fa-user-shield",
+        "wireguard.wireguardserver": "fas fa-server",
+    },
+}
+
+JAZZMIN_UI_TWEAKS = {
+        "theme": "flatly",
+        "dark_mode_theme": "darkly",
+        "navbar": "navbar-dark",
+        "active_navbar": "bg-primary",
+        "accent": "accent-primary",
+    "button_classes": {
+        "primary": "btn-success",  # Green primary buttons
+        "secondary": "btn-secondary",
+        "info": "btn-info",
+        "warning": "btn-warning",  # Orange warning buttons
+        "danger": "btn-danger",
+        "success": "btn-success"
+    },
+}

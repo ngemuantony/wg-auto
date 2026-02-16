@@ -3,7 +3,7 @@
 ########################################
 # Setup WireGuard sudoers Configuration
 ########################################
-# This script configures sudoers to allow a non-root user
+# This script configures sudoers to allow non-root users
 # to run specific WireGuard commands without a password.
 #
 # Usage:
@@ -23,7 +23,7 @@ if [ -z "$1" ]; then
 fi
 
 APP_USER="$1"
-SUDOERS_FILE="/etc/sudoers.d/wireguard-auto-$APP_USER"
+SUDOERS_FILE="/etc/sudoers.d/wireguard-auto"
 
 echo "[INFO] Configuring sudoers for user: $APP_USER"
 
@@ -33,45 +33,47 @@ if ! id "$APP_USER" &>/dev/null; then
     exit 1
 fi
 
-# Create sudoers entry
-cat > "$SUDOERS_FILE" <<'EOF'
-# WireGuard Auto - Allow non-root user to run WireGuard commands without password
-# This allows the Django application to:
-# 1. Generate WireGuard keys (genkey, pubkey)
-# 2. Inject/remove peers into live interface (set)
-# 3. Query interface status (show)
-# 4. Manage WireGuard interfaces (wg-quick)
+# Ensure the sudoers file exists and define the command alias once
+if [ ! -f "$SUDOERS_FILE" ]; then
+    cat > "$SUDOERS_FILE" <<'EOF'
+# WireGuard Auto - Allow non-root users to run WireGuard commands without password
+# This allows the application to:
+# - Generate keys
+# - Inject/remove peers
+# - Query interface status
+# - Manage WireGuard interfaces
 
 Cmnd_Alias WG_COMMANDS = /usr/bin/wg, /usr/bin/wg-quick
-
 EOF
+fi
 
-# Append the user-specific entry
-echo "$APP_USER ALL=(ALL) NOPASSWD: WG_COMMANDS" >> "$SUDOERS_FILE"
+# Add the user entry if it does not already exist
+if ! grep -q "^$APP_USER " "$SUDOERS_FILE"; then
+    echo "$APP_USER ALL=(ALL) NOPASSWD: WG_COMMANDS" >> "$SUDOERS_FILE"
+    echo "[INFO] Added $APP_USER to sudoers"
+else
+    echo "[INFO] User $APP_USER already has sudoers entry, skipping."
+fi
 
 # Validate sudoers syntax
 if ! visudo -c -f "$SUDOERS_FILE" &>/dev/null; then
-    echo "[ERROR] Invalid sudoers syntax. Removing file."
-    rm "$SUDOERS_FILE"
+    echo "[ERROR] Invalid sudoers syntax. Please check $SUDOERS_FILE manually."
     exit 1
 fi
 
 # Set proper permissions
 chmod 0440 "$SUDOERS_FILE"
 
-echo "[SUCCESS] Sudoers configured at: $SUDOERS_FILE"
+echo "[SUCCESS] Sudoers configuration completed at: $SUDOERS_FILE"
 echo ""
 echo "Configured permissions:"
 echo "  User: $APP_USER"
-echo "  Commands allowed (all /usr/bin/wg* commands):"
+echo "  Commands allowed:"
 echo "    - wg genkey        (generate private keys)"
 echo "    - wg pubkey        (derive public keys)"
 echo "    - wg show          (query interface status)"
 echo "    - wg set           (inject/remove peers live)"
 echo "    - wg-quick up/down (manage interfaces)"
-echo ""
-echo "The user can now run these commands with: sudo wg <command>"
-echo "without being prompted for a password."
 echo ""
 echo "[INFO] Testing sudoers configuration..."
 if sudo -u "$APP_USER" -n sudo wg show &>/dev/null 2>&1; then
@@ -79,3 +81,9 @@ if sudo -u "$APP_USER" -n sudo wg show &>/dev/null 2>&1; then
 else
     echo "[WARNING] Test indicated potential issues. Please verify manually."
 fi
+
+# Check for common issues
+sudo visudo -c -f "$SUDOERS_FILE" &>/dev/null || {
+    echo "[ERROR] Sudoers file has syntax errors. Please fix $SUDOERS_FILE."
+    exit 1
+}

@@ -9,3 +9,5 @@ class CryptoService:
     @staticmethod
     def decrypt(value: str) -> str:
         return Fernet(settings.ENCRYPTION_KEY).decrypt(value.encode()).decode()
+    print("CryptoService initialized with encryption key.")
+    print(f"Encryption key: {settings.ENCRYPTION_KEY}")
