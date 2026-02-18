@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from django.template.loader import render_to_string
-
+import markdown  # new import
 
 @dataclass
 class GuideContext:
@@ -9,7 +9,6 @@ class GuideContext:
     allowed_ips: str
     dns: str
     platform: str
-
 
 class InstallationGuideService:
     """
@@ -32,7 +31,8 @@ class InstallationGuideService:
 
         template = f"wireguard/guides/{context.platform}.md"
 
-        return render_to_string(
+        # Render Markdown template as plain text first
+        markdown_content = render_to_string(
             template,
             {
                 "peer": context.peer_name,
@@ -41,3 +41,11 @@ class InstallationGuideService:
                 "dns": context.dns,
             },
         )
+
+        # Convert Markdown to HTML
+        html_content = markdown.markdown(
+            markdown_content, 
+            extensions=["fenced_code", "tables"]
+        )
+
+        return html_content

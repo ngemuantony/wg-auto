@@ -3,60 +3,148 @@
 <head>
     <meta charset="utf-8">
     <title>WireGuard VPN Access</title>
+
+    <!-- Email-safe styling -->
     <style>
-        body { font-family: Arial, sans-serif; }
-        .card {
-            max-width: 600px;
-            margin: auto;
-            padding: 20px;
-            border-radius: 8px;
-            background: #f9fafb;
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background-color: #f3f4f6;
+            margin: 0;
+            padding: 0;
+            color: #111827;
         }
+
+        .wrapper {
+            padding: 20px;
+        }
+
+        .card {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 24px;
+            border-radius: 10px;
+            background: #ffffff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #111827;
+        }
+
+        h3 {
+            margin-top: 28px;
+            color: #1f2937;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 6px;
+        }
+
+        p {
+            line-height: 1.6;
+            margin: 12px 0;
+        }
+
+        ul {
+            padding-left: 18px;
+        }
+
+        li {
+            margin-bottom: 6px;
+        }
+
         .qr {
             text-align: center;
             margin: 20px 0;
         }
-        code {
-            background: #eee;
-            padding: 4px 6px;
+
+        .qr img {
+            max-width: 220px;
+            height: auto;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+        }
+
+        /* Markdown-rendered content */
+        .installation-guide h1 {
+            font-size: 18px;
+            margin-top: 24px;
+        }
+
+        .installation-guide h2 {
+            font-size: 16px;
+            margin-top: 20px;
+        }
+
+        .installation-guide h3 {
+            font-size: 15px;
+            margin-top: 16px;
+            border: none;
+        }
+
+        .installation-guide pre {
+            background: #f9fafb;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .installation-guide code {
+            background: #f3f4f6;
+            padding: 2px 5px;
             border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .footer {
+            margin-top: 30px;
+            font-size: 13px;
+            color: #6b7280;
         }
     </style>
 </head>
 
 <body>
-<div class="card">
-    <h2>Hello {{ user_name }},</h2>
+<div class="wrapper">
+    <div class="card">
 
-    <p>Your VPN access has been successfully created.</p>
+        <h2>Hello {{ user_name }},</h2>
 
-    <h3>Quick Setup (Mobile)</h3>
-    <div class="qr">
-        <img src="cid:wg_qr_code" alt="WireGuard QR Code">
-        <p>Scan using the WireGuard app</p>
+        <p>Your VPN access has been successfully created.</p>
+
+        <h3>Quick Setup (Mobile)</h3>
+        <div class="qr">
+            <img src="cid:wg_qr_code" alt="WireGuard QR Code">
+            <p>Scan using the WireGuard app</p>
+        </div>
+
+        <h3>Manual Configuration</h3>
+        <p>Your WireGuard configuration file (<code>.conf</code>) is attached to this email.</p>
+
+        <h3>Server Details</h3>
+        <ul>
+            <li><strong>Endpoint:</strong> {{ endpoint }}</li>
+            <li><strong>Allowed IPs:</strong> {{ allowed_ips }}</li>
+            <li><strong>DNS:</strong> {{ dns }}</li>
+        </ul>
+
+        <h3>Installation Guide</h3>
+
+        <div class="installation-guide">
+            {{ guide|safe }}
+        </div>
+
+        <div class="footer">
+            <p>If you have any issues, contact the administrator.</p>
+
+            <p>
+                <strong>Stay secure 🔐</strong><br>
+                WireGuard Automation Suite
+            </p>
+        </div>
+
     </div>
-
-    <h3>Manual Configuration</h3>
-    <p>Your configuration file is attached to this email.</p>
-
-    <h3>Server Details</h3>
-    <ul>
-        <li><strong>Endpoint:</strong> {{ endpoint }}</li>
-        <li><strong>Allowed IPs:</strong> {{ allowed_ips }}</li>
-        <li><strong>DNS:</strong> {{ dns }}</li>
-    </ul>
-
-    <h3>Installation Guide</h3>
-    <pre>{{ guide }}</pre>
-
-    <p style="margin-top: 30px;">
-        If you have any issues, contact the administrator.
-    </p>
-
-    <p>
-        <strong>Stay secure 🔐</strong><br>
-        WireGuard Automation Suite
-    </p>
 </div>
 </body>
 </html>

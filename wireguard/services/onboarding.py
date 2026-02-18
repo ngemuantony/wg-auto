@@ -1,6 +1,7 @@
 import logging
 import os
 import ipaddress
+import markdown  # Added for Markdown to HTML conversion
 
 from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.loader import render_to_string
@@ -172,7 +173,9 @@ def onboard(peer_id: int):
 
     try:
         endpoint = f"{server.endpoint.split(':')[0]}:{server.port}"
-        guide = InstallationGuideService.generate(
+
+        # Generate HTML guide from Markdown
+        guide_markdown = InstallationGuideService.generate(
             GuideContext(
                 peer_name=peer.name,
                 server_endpoint=endpoint,
@@ -182,6 +185,12 @@ def onboard(peer_id: int):
             )
         )
 
+        # Ensure Markdown is converted to proper HTML
+        guide_html = markdown.markdown(
+            guide_markdown,
+            extensions=["fenced_code", "tables"]
+        )
+
         html_body = render_to_string(
             "wireguard/emails/onboarding.html",
             {
@@ -189,7 +198,7 @@ def onboard(peer_id: int):
                 "endpoint": endpoint,
                 "allowed_ips": peer.get_allowed_ips(),
                 "dns": peer.get_dns(),
-                "guide": guide,
+                "guide": guide_html,  # HTML now, not raw Markdown
                 "server_name": server.name,
             }
         )
