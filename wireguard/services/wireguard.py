@@ -1,25 +1,38 @@
-# wireguard/services/wireguard.py
 import os
 import subprocess
-import base64
 from django.conf import settings
 from django.core.cache import cache
+
 from wireguard.models import WireGuardPeer
 from wireguard.constants import WG_ACTIVE_PEERS_CACHE_KEY
 from .qr import generate_qr
 
 
+# ============================================================
+# SYSTEM BINARIES (ABSOLUTE PATHS — OPTION A)
+# ============================================================
+
+WG_BIN = "/usr/bin/wg"
+
+
+# ============================================================
+# ACTIVE PEERS CACHE
+# ============================================================
+
 def get_active_peers():
     """
     Cached list of active WireGuard peers.
     Used by config generation and sync logic.
-    Includes server configuration if available.
     """
     peers = cache.get(WG_ACTIVE_PEERS_CACHE_KEY)
     if peers:
         return peers
 
-    qs = WireGuardPeer.objects.filter(is_active=True).select_related('server')
+    qs = (
+        WireGuardPeer.objects
+        .filter(is_active=True)
+        .select_related("server")
+    )
 
     peers = []
     for peer in qs:
@@ -40,82 +53,92 @@ def get_active_peers():
     return peers
 
 
+# ============================================================
+# WIREGUARD RUNTIME SERVICE (NO SUDO, NO RESTARTS)
+# ============================================================
+
 class WireGuardService:
     """
     Runtime WireGuard operations.
-    This class NEVER restarts the interface.
+
+    IMPORTANT:
+    - Uses absolute binary paths
+    - Never calls sudo
+    - Never restarts the interface
+    - Safe for Celery + systemd
     """
 
     @staticmethod
-    def generate_keys() -> tuple[str, str]:
+    def generate_keys(timeout: int = 5) -> tuple[str, str]:
         """
-        Generate WireGuard private and public keys using system wg command.
-        Uses sudo to escalate privileges (must be configured in /etc/sudoers first).
-        Returns: (private_key, public_key)
+        Generate WireGuard private & public keys using system wg binary.
+
+        Returns:
+            (private_key, public_key)
         """
+        if os.name == "nt":
+            raise RuntimeError("WireGuard is not supported on Windows")
+
         try:
-            # Generate private key using 'wg genkey'
-            private_key_output = subprocess.run(
-                ["sudo", "wg", "genkey"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            # Generate private key
+            private_key_proc = subprocess.run(
+                [WG_BIN, "genkey"],
+                capture_output=True,
                 text=True,
+                timeout=timeout,
                 check=True,
-                timeout=10
             )
-            private_key = private_key_output.stdout.strip()
 
-            # Generate public key from private key using 'wg pubkey'
-            public_key_output = subprocess.run(
-                ["sudo", "wg", "pubkey"],
+            private_key = private_key_proc.stdout.strip()
+            if not private_key:
+                raise RuntimeError("Empty private key returned")
+
+            # Generate public key
+            public_key_proc = subprocess.run(
+                [WG_BIN, "pubkey"],
                 input=private_key,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
+                timeout=timeout,
                 check=True,
-                timeout=10
             )
-            public_key = public_key_output.stdout.strip()
 
-            if not private_key or not public_key:
-                raise ValueError("Key generation returned empty values")
+            public_key = public_key_proc.stdout.strip()
+            if not public_key:
+                raise RuntimeError("Empty public key returned")
 
             return private_key, public_key
-            
-        except subprocess.CalledProcessError as e:
-            import sys
-            error_msg = e.stderr if e.stderr else str(e)
-            print(f"[KEY_GEN] Error running 'wg' command: {error_msg}", file=sys.stderr)
-            print(f"[KEY_GEN] Make sure /etc/sudoers is configured. Run: sudo bash scripts/setup-sudoers.sh <username>", file=sys.stderr)
-            raise RuntimeError(f"Failed to generate WireGuard keys with wg command: {error_msg}")
-            
-        except FileNotFoundError:
-            import sys
-            print(f"[KEY_GEN] 'wg' command not found. Is WireGuard installed?", file=sys.stderr)
-            print(f"[KEY_GEN] Install with: sudo apt install wireguard", file=sys.stderr)
-            raise RuntimeError("WireGuard 'wg' command not found on system")
-            
+
         except subprocess.TimeoutExpired:
-            import sys
-            print(f"[KEY_GEN] 'wg' command timeout", file=sys.stderr)
             raise RuntimeError("WireGuard key generation timed out")
-            
+
+        except FileNotFoundError:
+            raise RuntimeError(
+                "WireGuard binary not found at /usr/bin/wg. "
+                "Install with: apt install wireguard-tools"
+            )
+
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.strip() if e.stderr else "unknown error"
+            raise RuntimeError(f"WireGuard key generation failed: {stderr}")
+
         except Exception as e:
-            import sys
-            print(f"[KEY_GEN] Unexpected error: {e}", file=sys.stderr)
-            raise RuntimeError(f"Failed to generate WireGuard keys: {e}")
+            raise RuntimeError(f"Unexpected WireGuard error: {e}") from e
+
+    # --------------------------------------------------------
 
     @staticmethod
     def _run(cmd: list[str]):
         """
-        Execute wg command safely.
-        Disabled on Windows.
+        Execute WireGuard command safely.
+        No-op on Windows.
         """
         if os.name == "nt":
-            # Windows dev mode: no-op
             return
 
         subprocess.run(cmd, check=True)
+
+    # --------------------------------------------------------
 
     @classmethod
     def add_peer(cls, peer: WireGuardPeer):
@@ -123,7 +146,7 @@ class WireGuardService:
         Inject peer into a live WireGuard interface.
         """
         cls._run([
-            "wg",
+            WG_BIN,
             "set",
             settings.WIREGUARD_INTERFACE,
             "peer",
@@ -134,13 +157,15 @@ class WireGuardService:
 
         cache.delete(WG_ACTIVE_PEERS_CACHE_KEY)
 
+    # --------------------------------------------------------
+
     @classmethod
     def remove_peer(cls, peer: WireGuardPeer):
         """
         Remove peer from a live WireGuard interface.
         """
         cls._run([
-            "wg",
+            WG_BIN,
             "set",
             settings.WIREGUARD_INTERFACE,
             "peer",

@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 from celery import shared_task
@@ -7,138 +6,140 @@ from .models import WireGuardPeer, WireGuardServer
 from .services.onboarding import onboard, generate_server_config
 
 
-@shared_task
-def onboard_peer(peer_id):
-    """Onboard a peer with welcome email and QR code, then sync config."""
-    try:
-        onboard(peer_id)  # Pass peer_id (integer), not peer object
-        print(f"[ONBOARD] Onboarding complete for peer {peer_id}", file=sys.stderr)
-
-        # Sync server config to include this new peer
-        peer = WireGuardPeer.objects.get(id=peer_id)
-        server = peer.server or peer.get_server()
-        if server:
-            print(f"[ONBOARD] Syncing server config to include new peer", file=sys.stderr)
-            sync_wg_config.delay(server.id)
-
-        return {'status': 'success', 'peer_id': peer_id}
-
-    except WireGuardPeer.DoesNotExist:
-        print(f"[ONBOARD] ERROR: Peer {peer_id} not found", file=sys.stderr)
-        return {'status': 'error', 'message': f'Peer {peer_id} not found'}
-
-    except Exception as e:
-        print(f"[ONBOARD] Error onboarding peer {peer_id}: {e}", file=sys.stderr)
-        raise
-
+# ============================================================
+# Peer Onboarding Task
+# ============================================================
 
 @shared_task(bind=True, max_retries=3)
-def sync_wg_config(self, server_id: int):
-    """
-    Regenerate and write /etc/wireguard/wg0.conf when server config changes.
-    Uses sudo to write protected /etc/wireguard/ directory.
-    Runs as background task to avoid blocking the admin.
-    """
+def onboard_peer(self, peer_id: int):
     try:
-        server = WireGuardServer.objects.get(id=server_id)
+        onboard(peer_id)
+        print(f"[ONBOARD] Completed for peer {peer_id}", file=sys.stderr)
 
-        # Get private key
-        private_key = server.get_private_key()
+        peer = WireGuardPeer.objects.get(id=peer_id)
+        server = peer.server or peer.get_server()
 
-        # Generate server config
-        config_content = generate_server_config(server, private_key)
+        if server:
+            sync_wg_config.delay(server.id)
+            inject_peer_live.delay(peer.id)
 
-        # Write to file using sudo
-        config_path = f'/etc/wireguard/{server.interface}.conf'
+        return {"status": "success", "peer_id": peer_id}
 
-        try:
-            # Use sudo tee to write the file
-            subprocess.run(
-                ['sudo', 'tee', config_path],
-                input=config_content,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=10,
-                check=True
-            )
-
-            # Set restrictive permissions
-            subprocess.run(
-                ['sudo', 'chmod', '600', config_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=10,
-                check=True
-            )
-
-            print(f"[WG_SYNC] Successfully wrote config to {config_path}", file=sys.stderr)
-            return {'status': 'success', 'path': config_path, 'server_id': server_id}
-
-        except subprocess.CalledProcessError as e:
-            error_msg = e.stderr if e.stderr else str(e)
-            print(f"[WG_SYNC] Failed to write config with sudo: {error_msg}", file=sys.stderr)
-            print(f"[WG_SYNC] Make sure sudoers is configured: sudo bash scripts/setup-sudoers.sh <username>", file=sys.stderr)
-            raise
-
-    except WireGuardServer.DoesNotExist:
-        print(f"[WG_SYNC] Server {server_id} not found", file=sys.stderr)
-        return {'status': 'error', 'message': f'Server {server_id} not found'}
+    except WireGuardPeer.DoesNotExist:
+        return {"status": "error", "message": "Peer not found"}
 
     except Exception as e:
-        print(f"[WG_SYNC] Error syncing config: {e}", file=sys.stderr)
+        print(f"[ONBOARD] ERROR: {e}", file=sys.stderr)
         raise self.retry(exc=e, countdown=10)
 
 
-@shared_task(bind=True, max_retries=3)
+# ============================================================
+# Server Configuration Sync Task
+# ============================================================
+
+@shared_task(bind=True, max_retries=2)
+def sync_wg_config(self, server_id: int):
+    try:
+        server = WireGuardServer.objects.get(id=server_id)
+        private_key = server.get_private_key()
+        config_content = generate_server_config(server, private_key)
+
+        config_path = f"/etc/wireguard/{server.interface}.conf"
+
+        # Write config using sudo tee (NO temp files)
+        proc = subprocess.run(
+            ["sudo", "-n", "tee", config_path],
+            input=config_content,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        if proc.returncode != 0:
+            raise PermissionError(proc.stderr.strip())
+
+        subprocess.run(
+            ["sudo", "-n", "chmod", "600", config_path],
+            check=True,
+        )
+
+        print(f"[WG_SYNC] Config written: {config_path}", file=sys.stderr)
+        return {"status": "success", "server": server.interface}
+
+    except WireGuardServer.DoesNotExist:
+        return {"status": "error", "message": "Server not found"}
+
+    except PermissionError as e:
+        print(f"[WG_SYNC] PERMISSION ERROR: {e}", file=sys.stderr)
+        # Do NOT retry forever on sudo errors
+        raise
+
+    except Exception as e:
+        print(f"[WG_SYNC] ERROR: {e}", file=sys.stderr)
+        raise self.retry(exc=e, countdown=10)
+
+
+# ============================================================
+# Live Peer Injection Task
+# ============================================================
+
+@shared_task(bind=True, max_retries=2)
 def inject_peer_live(self, peer_id: int):
-    """
-    Inject a peer into the live WireGuard interface without restarting.
-    Uses 'wg set' to dynamically add/update peer.
-    Skips if peer doesn't have public key yet (keys generated during onboarding).
-    """
     try:
         peer = WireGuardPeer.objects.get(id=peer_id)
         server = peer.get_server()
 
         if not server or not server.is_active:
-            print(f"[WG_INJECT] Peer {peer_id} has no active server", file=sys.stderr)
-            return {'status': 'error', 'message': 'No active server'}
+            return {"status": "skipped", "reason": "No active server"}
 
-        # Skip if public key not generated yet
-        if not peer.public_key or peer.public_key.strip() in ('', '-'):
-            print(f"[WG_INJECT] Skipping injection for {peer.name} - public key not yet generated", file=sys.stderr)
-            print(f"[WG_INJECT] Keys will be generated by onboarding task, config will be synced afterward", file=sys.stderr)
-            return {'status': 'skipped', 'reason': 'public_key_not_generated', 'peer_id': peer_id}
+        if not peer.public_key or peer.public_key.strip() in ("", "-"):
+            print(f"[WG_INJECT] Public key missing for {peer.name}", file=sys.stderr)
+            return {"status": "skipped", "reason": "No public key"}
 
-        if not peer.is_active:
-            # Remove peer
-            print(f"[WG_INJECT] Removing peer {peer.name} from {server.interface}", file=sys.stderr)
-            cmd = ['sudo', 'wg', 'set', server.interface, 'peer', peer.public_key, 'remove']
-        else:
-            # Add/update peer
-            print(f"[WG_INJECT] Injecting peer {peer.name} into {server.interface}", file=sys.stderr)
-            cmd = ['sudo', 'wg', 'set', server.interface, 'peer', peer.public_key, 'allowed-ips', peer.allowed_ip]
+        if peer.is_active:
+            cmd = [
+                "sudo", "-n", "wg", "set", server.interface,
+                "peer", peer.public_key,
+                "allowed-ips", peer.allowed_ip,
+            ]
 
-            # Persistent keepalive
             if server.persistent_keepalive:
-                cmd.extend(['persistent-keepalive', str(server.persistent_keepalive)])
+                cmd += ["persistent-keepalive", str(server.persistent_keepalive)]
 
-        # Execute
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10, check=True)
+            action = "inject"
 
-        print(f"[WG_INJECT] Successfully injected peer {peer.name}", file=sys.stderr)
-        return {'status': 'success', 'peer_id': peer_id, 'peer_name': peer.name, 'server': server.interface}
+        else:
+            cmd = [
+                "sudo", "-n", "wg", "set", server.interface,
+                "peer", peer.public_key,
+                "remove",
+            ]
+            action = "remove"
 
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else str(e)
-        print(f"[WG_INJECT] Failed to inject peer: {error_msg}", file=sys.stderr)
-        raise self.retry(exc=e, countdown=5)
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        if proc.returncode != 0:
+            raise PermissionError(proc.stderr.strip())
+
+        print(
+            f"[WG_INJECT] Peer {peer.name} {action}ed on {server.interface}",
+            file=sys.stderr,
+        )
+
+        return {"status": "success", "peer": peer.name}
 
     except WireGuardPeer.DoesNotExist:
-        print(f"[WG_INJECT] Peer {peer_id} not found", file=sys.stderr)
-        return {'status': 'error', 'message': f'Peer {peer_id} not found'}
+        return {"status": "error", "message": "Peer not found"}
+
+    except PermissionError as e:
+        print(f"[WG_INJECT] PERMISSION ERROR: {e}", file=sys.stderr)
+        raise
 
     except Exception as e:
-        print(f"[WG_INJECT] Unexpected error: {e}", file=sys.stderr)
-        raise self.retry(exc=e, countdown=10)
+        print(f"[WG_INJECT] ERROR: {e}", file=sys.stderr)
+        raise self.retry(exc=e, countdown=5)

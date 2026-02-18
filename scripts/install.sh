@@ -109,10 +109,12 @@ EOF
     }
 
     if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1; then
-        prompt_yes_no "Reset DB password?" && {
+        if prompt_yes_no "Reset DB password?"; then
             DB_PASSWORD="$(generate_password)"
             sudo -u postgres psql -c "ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASSWORD}';"
-        } || read -rsp "Enter existing DB password: " DB_PASSWORD && echo
+        else
+            read -rsp "Enter existing DB password: " DB_PASSWORD && echo
+        fi
     else
         DB_PASSWORD="$(generate_password)"
         sudo -u postgres psql <<EOF
@@ -164,7 +166,7 @@ setup_venv() {
 }
 
 ########################################
-# ENV FILE + ENCRYPTION KEY (CRITICAL)
+# ENV FILE + ENCRYPTION KEY (FIXED)
 ########################################
 setup_env() {
     mkdir -p "$BACKUP_DIR"
@@ -206,11 +208,9 @@ EOF
 )"
     fi
 
-    python3 - <<EOF || { log_error "Invalid ENCRYPTION_KEY"; exit 1; }
-import base64, sys
-key="${ENCRYPTION_KEY}"
-assert len(key) == 44
-base64.urlsafe_b64decode(key)
+    python3 - <<EOF
+import base64
+base64.urlsafe_b64decode("${ENCRYPTION_KEY}")
 EOF
 
     echo "ENCRYPTION_KEY=${ENCRYPTION_KEY}" >> "$ENV_FILE"
@@ -220,14 +220,37 @@ EOF
         OLD_KEY="$(grep '^ENCRYPTION_KEY=' "$LAST_ENV" | cut -d= -f2 || true)"
         if [[ -n "$OLD_KEY" && "$OLD_KEY" != "$ENCRYPTION_KEY" ]]; then
             prompt_yes_no "Reset encrypted WireGuard keys?" || exit 1
-            sudo -u "$SYSTEM_USER" bash <<EOF
-cd "$INSTALL_DIR"
+            sudo -u "$SYSTEM_USER" bash <<'EOF'
+cd /wg-auto/wg-auto
 set -a; source .env; set +a
-${VENV_DIR}/bin/python manage.py shell <<PY
+venv/bin/python manage.py shell <<'PY'
 from wireguard.models import WireGuardServer, WireGuardPeer
-WireGuardServer.objects.update(private_key_encrypted=None)
-WireGuardPeer.objects.update(private_key_encrypted=None)
-print("Encrypted keys cleared")
+from utils.crypto import CryptoService
+import subprocess
+
+crypto = CryptoService()
+
+def gen_key():
+    return subprocess.check_output(["wg", "genkey"]).strip()
+
+def pubkey(priv):
+    return subprocess.check_output(
+        ["bash", "-c", f"echo '{priv.decode()}' | wg pubkey"]
+    ).strip().decode()
+
+for s in WireGuardServer.objects.all():
+    k = gen_key()
+    s.private_key_encrypted = crypto.encrypt(k)
+    s.public_key = pubkey(k)
+    s.save(update_fields=["private_key_encrypted", "public_key"])
+
+for p in WireGuardPeer.objects.all():
+    k = gen_key()
+    p.private_key_encrypted = crypto.encrypt(k)
+    p.public_key = pubkey(k)
+    p.save(update_fields=["private_key_encrypted", "public_key"])
+
+print("✓ WireGuard keys regenerated safely")
 PY
 EOF
         fi
@@ -266,7 +289,7 @@ After=network.target redis-server.service postgresql.service
 Type=forking
 User=${SYSTEM_USER}
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${VENV_DIR}/bin/supervisord -c ${INSTALL_DIR}/wg-auto-supervisor.conf
+ExecStart=${VENV_DIR}/bin/supervisord -c ${INSTALL_DIR}/scripts/wg-auto-supervisor.conf
 ExecStop=${VENV_DIR}/bin/supervisorctl shutdown
 Restart=always
 

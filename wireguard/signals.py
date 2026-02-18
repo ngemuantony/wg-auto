@@ -1,98 +1,119 @@
 # wireguard/signals.py
-import sys
+import logging
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.core.cache import cache
-from .models import WireGuardPeer, WireGuardServer
-from .models import SMTPSettings
-from .constants import SMTP_SETTINGS_CACHE_KEY
-from .constants import WG_ACTIVE_PEERS_CACHE_KEY, WG_SERVER_CACHE_KEY
+from .models import WireGuardPeer, WireGuardServer, SMTPSettings
+from .constants import SMTP_SETTINGS_CACHE_KEY, WG_ACTIVE_PEERS_CACHE_KEY, WG_SERVER_CACHE_KEY
+
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# PEER SIGNALS
+# ============================================================
 
 @receiver(post_save, sender=WireGuardPeer)
-def trigger_onboarding(sender, instance, created, **kwargs):
+def trigger_onboarding(sender, instance: WireGuardPeer, created, **kwargs):
+    """
+    Trigger onboarding asynchronously for new peers or peers missing keys.
+    """
     needs_onboarding = created or (not instance.public_key or instance.public_key.strip() in ('', '-'))
-
     if needs_onboarding:
-        from .services.onboarding import onboard
-
+        from .tasks import onboard_peer
         try:
-            # Run synchronously for debugging / immediate key creation
-            print(f"[SIGNAL] Onboarding peer {instance.name} immediately", file=sys.stderr)
-            onboard(instance.id)  # This will generate keys now
+            onboard_peer.delay(instance.id)
+            logger.info("Queued onboarding task for peer %s", instance.name)
         except Exception as e:
-            print(f"[SIGNAL] Failed to onboard peer {instance.name}: {e}", file=sys.stderr)
+            logger.exception("Failed to queue onboarding for peer %s: %s", instance.name, e)
+
 
 @receiver(post_save, sender=WireGuardPeer)
-def trigger_peer_injection(sender, instance, created, **kwargs):
+def trigger_peer_injection(sender, instance: WireGuardPeer, created, **kwargs):
     """
-    When a peer is UPDATED (not created), inject it into the live WireGuard interface.
-    For new peers, onboarding task generates keys first, then config sync handles injection.
+    Inject peer into live WireGuard interface on updates only.
     """
-    # Skip injection for newly created peers - let onboarding generate keys first
     if created:
-        print(f"[SIGNAL] New peer {instance.name} created - skipping injection until keys generated", file=sys.stderr)
+        # Skip injection for new peers; onboarding will handle it
+        logger.info("New peer %s created - injection will occur after onboarding", instance.name)
         return
-    
-    # Only inject on updates (when keys and config already exist)
+
     from .tasks import inject_peer_live
     try:
         inject_peer_live.delay(instance.id)
-        print(f"[SIGNAL] Triggered peer injection for {instance.name}", file=sys.stderr)
+        logger.info("Queued peer injection task for %s", instance.name)
     except Exception as e:
-        print(f"[SIGNAL] Warning: Could not trigger peer injection: {e}", file=sys.stderr)
+        logger.exception("Failed to queue peer injection for %s: %s", instance.name, e)
 
 
 @receiver(post_delete, sender=WireGuardPeer)
-def trigger_peer_removal(sender, instance, **kwargs):
-    """When a peer is deleted, remove it from the live interface."""
+def trigger_peer_removal(sender, instance: WireGuardPeer, **kwargs):
+    """
+    When a peer is deleted, remove it from the live interface asynchronously.
+    """
     from .tasks import inject_peer_live
     try:
-        # Mark as inactive and trigger removal
-        instance.is_active = False
+        instance.is_active = False  # Mark as inactive for removal
         inject_peer_live.delay(instance.id)
+        logger.info("Queued peer removal task for %s", instance.name)
     except Exception as e:
-        import sys
-        print(f"[SIGNAL] Warning: Could not trigger peer removal: {e}", file=sys.stderr)
+        logger.exception("Failed to queue peer removal for %s: %s", instance.name, e)
 
+
+# ============================================================
+# SERVER SIGNALS
+# ============================================================
 
 @receiver(post_save, sender=WireGuardServer)
-def invalidate_server_cache(sender, instance, **kwargs):
-    """Invalidate cache when server configuration changes."""
+def invalidate_server_cache(sender, instance: WireGuardServer, **kwargs):
+    """
+    Invalidate cache when server configuration changes.
+    """
     try:
         cache.delete(WG_SERVER_CACHE_KEY)
-        # Also invalidate active peers cache since they depend on server config
         cache.delete(WG_ACTIVE_PEERS_CACHE_KEY)
+        logger.info("Invalidated server and active peers cache for server %s", instance.name)
     except Exception as e:
-        # Don't fail the operation if cache invalidation fails
-        import sys
-        print(f"Warning: Could not invalidate server cache: {e}", file=sys.stderr)
+        logger.warning("Could not invalidate server cache: %s", e)
 
 
 @receiver(post_save, sender=WireGuardServer)
-def sync_wg_config_on_save(sender, instance, **kwargs):
-    """When server configuration is saved, regenerate wg0.conf file."""
+def sync_wg_config_on_save(sender, instance: WireGuardServer, **kwargs):
+    """
+    Regenerate wg0.conf asynchronously when server config changes.
+    """
     from .tasks import sync_wg_config
     try:
-        # Trigger async task to regenerate config without blocking
         sync_wg_config.delay(instance.id)
+        logger.info("Queued WireGuard config sync for server %s", instance.name)
     except Exception as e:
-        import sys
-        print(f"[SIGNAL] Warning: Could not trigger config sync: {e}", file=sys.stderr)
+        logger.exception("Failed to queue config sync for server %s: %s", instance.name, e)
 
 
 @receiver(post_delete, sender=WireGuardServer)
-def invalidate_server_cache_on_delete(sender, instance, **kwargs):
-    """Invalidate cache when server is deleted."""
+def invalidate_server_cache_on_delete(sender, instance: WireGuardServer, **kwargs):
+    """
+    Invalidate cache when server is deleted.
+    """
     try:
         cache.delete(WG_SERVER_CACHE_KEY)
         cache.delete(WG_ACTIVE_PEERS_CACHE_KEY)
+        logger.info("Invalidated server cache for deleted server %s", instance.name)
     except Exception as e:
-        # Don't fail the operation if cache invalidation fails
-        import sys
-        print(f"Warning: Could not invalidate server cache on delete: {e}", file=sys.stderr)
+        logger.warning("Could not invalidate server cache on delete: %s", e)
+
+
+# ============================================================
+# SMTP SETTINGS CACHE
+# ============================================================
 
 @receiver(post_save, sender=SMTPSettings)
 @receiver(post_delete, sender=SMTPSettings)
 def invalidate_smtp_cache(sender, instance, **kwargs):
-    from django.core.cache import cache
-    cache.delete(SMTP_SETTINGS_CACHE_KEY)
+    """
+    Clear cached SMTP settings whenever they are changed.
+    """
+    try:
+        cache.delete(SMTP_SETTINGS_CACHE_KEY)
+        logger.info("SMTP settings cache cleared")
+    except Exception as e:
+        logger.warning("Could not clear SMTP settings cache: %s", e)

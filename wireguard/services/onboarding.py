@@ -17,13 +17,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 def generate_peer_config(peer) -> str:
-    """
-    Generate WireGuard peer configuration content.
-    Ensures:
-    - Endpoint is always host:port (no spaces)
-    - No duplicate ports
-    - Safe defaults
-    """
+    """Generate WireGuard peer configuration."""
     private_key = peer.get_private_key()
     server = peer.get_server()
     if not server:
@@ -54,18 +48,13 @@ AllowedIPs = {allowed_ips}
 PersistentKeepalive = {keepalive}
 """
 
-
 # ============================================================
-# SERVER CONFIG GENERATION (iptables-legacy ONLY)
+# SERVER CONFIG GENERATION
 # ============================================================
 
 def generate_server_config(server, private_key: str) -> str:
-    """
-    Generate full WireGuard server configuration.
-    Uses iptables-legacy only (NO UFW).
-    """
+    """Generate WireGuard server configuration (iptables-legacy only)."""
     iface = ipaddress.ip_interface(server.server_address)
-    server_ip = str(iface.ip)
     network_cidr = str(iface)
 
     raw_endpoint = (server.endpoint or "").strip()
@@ -133,20 +122,12 @@ def generate_server_config(server, private_key: str) -> str:
     lines.append("# End of WireGuard configuration")
     return "\n".join(lines)
 
-
 # ============================================================
 # PEER ONBOARDING
 # ============================================================
 
-def onboard(peer_id):
-    """
-    Full onboarding workflow:
-    - Assign server
-    - Generate keys
-    - Generate config
-    - Generate QR code
-    - Send email
-    """
+def onboard(peer_id: int):
+    """Full peer onboarding workflow: assign server, generate keys, config, QR, send email."""
     from wireguard.models import WireGuardPeer
     from wireguard.services.email import get_smtp_settings
 
@@ -158,36 +139,39 @@ def onboard(peer_id):
         logger.error("Peer %s not found", peer_id)
         raise
 
+    server = peer.server or WireGuardServerService.get_default_server()
     if not peer.server:
-        peer.server = WireGuardServerService.get_default_server()
+        peer.server = server
         peer.save()
 
+    # Generate keys if missing
     if not peer.private_key_encrypted:
         private_key, public_key = WireGuardService.generate_keys()
         peer.set_private_key(private_key)
         peer.public_key = public_key
         peer.save()
 
+    # Generate peer config
     conf_content = generate_peer_config(peer)
     conf_filename = f"{peer.name}.conf"
 
+    # Generate QR code (non-blocking)
     qr_path = None
     try:
         qr_path = generate_qr(str(peer.id), conf_content)
         peer.qr_path = qr_path
         peer.save()
     except Exception as e:
-        logger.warning("QR generation failed: %s", e)
+        logger.warning("QR generation failed for peer %s: %s", peer.name, e)
 
+    # Send email if SMTP configured
     smtp = get_smtp_settings(force_reload=True)
     if not smtp:
-        logger.warning("SMTP not configured — skipping email")
+        logger.warning("SMTP not configured — skipping email for peer %s", peer.name)
         return
 
     try:
-        server = peer.get_server()
         endpoint = f"{server.endpoint.split(':')[0]}:{server.port}"
-
         guide = InstallationGuideService.generate(
             GuideContext(
                 peer_name=peer.name,
@@ -236,8 +220,8 @@ def onboard(peer_id):
                 email.attach(f"qr_{peer.id}.png", f.read(), "image/png")
 
         sent = email.send()
-        logger.info("Email sent to %s (result=%s)", peer.email, sent)
+        logger.info("Onboarding email sent to %s (result=%s)", peer.email, sent)
 
-    except Exception:
-        logger.exception("Failed to send onboarding email")
+    except Exception as e:
+        logger.exception("Failed to send onboarding email to peer %s: %s", peer.name, e)
         raise
