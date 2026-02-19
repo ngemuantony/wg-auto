@@ -8,9 +8,6 @@ from wireguard.constants import WG_ACTIVE_PEERS_CACHE_KEY
 from .qr import generate_qr
 
 
-# ============================================================
-# SYSTEM BINARIES (ABSOLUTE PATHS — OPTION A)
-# ============================================================
 
 WG_BIN = "/usr/bin/wg"
 

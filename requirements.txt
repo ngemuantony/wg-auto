@@ -1,6 +1,10 @@
 # Core framework
 Django>=4.2,<5.1
 
+# Utilities
+markdown>=3.10.2,<4.0
+
+
 # Database
 psycopg2-binary>=2.9,<3.0
 
@@ -25,7 +29,8 @@ qrcode[pil]>=7.4,<8.0
 gunicorn>=21.2,<23.0
 
 # Admin UI
-django-jazzmin>=3.0,<4.0
+django-grappelli>=2.15,<3.0
+django-jazzmin>=2.5,<3.0
 
 # Testing (dev-only, safe to keep)
 pytest>=7.4,<9.0

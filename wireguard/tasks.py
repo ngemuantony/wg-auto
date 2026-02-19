@@ -1,9 +1,18 @@
 import subprocess
 import sys
+
 from celery import shared_task
 from django.conf import settings
+
 from .models import WireGuardPeer, WireGuardServer
 from .services.onboarding import onboard, generate_server_config
+
+
+# Absolute binaries (VERY IMPORTANT for Celery)
+SUDO = "/usr/bin/sudo"
+WG = "/usr/bin/wg"
+TEE = "/usr/bin/tee"
+CHMOD = "/usr/bin/chmod"
 
 
 # ============================================================
@@ -46,9 +55,9 @@ def sync_wg_config(self, server_id: int):
 
         config_path = f"/etc/wireguard/{server.interface}.conf"
 
-        # Write config using sudo tee (NO temp files)
+        # Write config using sudo + tee (no temp files)
         proc = subprocess.run(
-            ["sudo", "-n", "tee", config_path],
+            [SUDO, "-n", TEE, config_path],
             input=config_content,
             text=True,
             stdout=subprocess.PIPE,
@@ -58,9 +67,12 @@ def sync_wg_config(self, server_id: int):
         if proc.returncode != 0:
             raise PermissionError(proc.stderr.strip())
 
+        # Secure permissions
         subprocess.run(
-            ["sudo", "-n", "chmod", "600", config_path],
+            [SUDO, "-n", CHMOD, "600", config_path],
             check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
 
         print(f"[WG_SYNC] Config written: {config_path}", file=sys.stderr)
@@ -71,7 +83,7 @@ def sync_wg_config(self, server_id: int):
 
     except PermissionError as e:
         print(f"[WG_SYNC] PERMISSION ERROR: {e}", file=sys.stderr)
-        # Do NOT retry forever on sudo errors
+        # Do NOT retry endlessly on sudo failures
         raise
 
     except Exception as e:
@@ -98,7 +110,7 @@ def inject_peer_live(self, peer_id: int):
 
         if peer.is_active:
             cmd = [
-                "sudo", "-n", "wg", "set", server.interface,
+                SUDO, "-n", WG, "set", server.interface,
                 "peer", peer.public_key,
                 "allowed-ips", peer.allowed_ip,
             ]
@@ -110,7 +122,7 @@ def inject_peer_live(self, peer_id: int):
 
         else:
             cmd = [
-                "sudo", "-n", "wg", "set", server.interface,
+                SUDO, "-n", WG, "set", server.interface,
                 "peer", peer.public_key,
                 "remove",
             ]

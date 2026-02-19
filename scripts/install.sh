@@ -63,6 +63,31 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 ########################################
+# IP FORWARDING (AUTO)
+########################################
+setup_ip_forwarding() {
+    log_info "Enabling IP forwarding (IPv4 + IPv6)"
+
+    SYSCTL_FILE="/etc/sysctl.d/99-wg-auto-ipforward.conf"
+
+    cat > "$SYSCTL_FILE" <<EOF
+net.ipv4.ip_forward=1
+net.ipv6.conf.all.forwarding=1
+EOF
+
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null
+    sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
+    sysctl --system >/dev/null
+
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == "1" ]]; then
+        log_success "IP forwarding enabled and persistent"
+    else
+        log_error "Failed to enable IP forwarding"
+        exit 1
+    fi
+}
+
+########################################
 # SYSTEM USER + PERMISSIONS
 ########################################
 setup_system_user() {
@@ -95,7 +120,7 @@ install_system_packages() {
     apt install -y \
         python3 python3-venv python3-pip \
         postgresql postgresql-contrib \
-        redis-server wireguard nginx rsync curl git
+        redis-server wireguard nginx rsync curl git iptables
 }
 
 ########################################
@@ -160,19 +185,20 @@ setup_project() {
 setup_venv() {
     [[ -x "${VENV_DIR}/bin/python" ]] || {
         sudo -u "$SYSTEM_USER" python3 -m venv "$VENV_DIR"
-        sudo -u "$SYSTEM_USER" "$VENV_DIR/bin/pip" install --upgrade pip
-        sudo -u "$SYSTEM_USER" "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
     }
+
+    sudo -u "$SYSTEM_USER" "$VENV_DIR/bin/pip" install --upgrade pip
+    sudo -u "$SYSTEM_USER" "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
 }
 
 ########################################
-# ENV FILE + ENCRYPTION KEY (FIXED)
+# ENV FILE + ENCRYPTION KEY
 ########################################
 setup_env() {
     mkdir -p "$BACKUP_DIR"
     [[ -f "$ENV_FILE" ]] && cp "$ENV_FILE" "$BACKUP_DIR/.env.$(date +%s)"
 
-    SECRET_KEY="$(python3 - <<EOF
+    SECRET_KEY="$("${VENV_DIR}/bin/python" - <<EOF
 import secrets; print(secrets.token_urlsafe(50))
 EOF
 )"
@@ -201,33 +227,42 @@ EOF
     if [[ -n "$USER_KEY" ]]; then
         ENCRYPTION_KEY="$USER_KEY"
     else
-        ENCRYPTION_KEY="$(python3 - <<EOF
+        ENCRYPTION_KEY="$("${VENV_DIR}/bin/python" - <<EOF
 import secrets, base64
 print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
 EOF
 )"
     fi
 
-    python3 - <<EOF
-import base64
-base64.urlsafe_b64decode("${ENCRYPTION_KEY}")
-EOF
-
     echo "ENCRYPTION_KEY=${ENCRYPTION_KEY}" >> "$ENV_FILE"
 
-    LAST_ENV="$(ls -1 "$BACKUP_DIR"/.env.* 2>/dev/null | tail -n 1 || true)"
-    if [[ -n "$LAST_ENV" ]]; then
-        OLD_KEY="$(grep '^ENCRYPTION_KEY=' "$LAST_ENV" | cut -d= -f2 || true)"
-        if [[ -n "$OLD_KEY" && "$OLD_KEY" != "$ENCRYPTION_KEY" ]]; then
-            prompt_yes_no "Reset encrypted WireGuard keys?" || exit 1
-            sudo -u "$SYSTEM_USER" bash <<'EOF'
-cd /wg-auto/wg-auto
-set -a; source .env; set +a
-venv/bin/python manage.py shell <<'PY'
-from wireguard.models import WireGuardServer, WireGuardPeer
-from utils.crypto import CryptoService
-import subprocess
+    chown "$SYSTEM_USER:$SYSTEM_USER" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+}
 
+########################################
+# DJANGO + MIGRATIONS + WIREGUARD KEYS
+########################################
+setup_django() {
+    sudo -u "$SYSTEM_USER" bash <<EOF
+cd "$INSTALL_DIR"
+export DJANGO_SETTINGS_MODULE="config.settings"
+set -a; source .env; set +a
+${VENV_DIR}/bin/python manage.py makemigrations
+${VENV_DIR}/bin/python manage.py migrate
+${VENV_DIR}/bin/python manage.py collectstatic --noinput
+
+# --- regenerate WireGuard keys safely using venv python ---
+${VENV_DIR}/bin/python <<PY
+import os
+import django
+import subprocess
+from utils.crypto import CryptoService
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+django.setup()
+
+from wireguard.models import WireGuardServer, WireGuardPeer
 crypto = CryptoService()
 
 def gen_key():
@@ -253,24 +288,47 @@ for p in WireGuardPeer.objects.all():
 print("✓ WireGuard keys regenerated safely")
 PY
 EOF
-        fi
-    fi
-
-    chown "$SYSTEM_USER:$SYSTEM_USER" "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
 }
 
 ########################################
-# DJANGO
+# DJANGO SUPERUSER
 ########################################
-setup_django() {
-    sudo -u "$SYSTEM_USER" bash <<EOF
-cd "$INSTALL_DIR"
-set -a; source .env; set +a
-${VENV_DIR}/bin/python manage.py makemigrations
-${VENV_DIR}/bin/python manage.py migrate
-${VENV_DIR}/bin/python manage.py collectstatic --noinput
+setup_superuser() {
+    echo
+    log_info "Create Django superuser for admin access"
+
+    if prompt_yes_no "Do you want to create a Django superuser now?"; then
+        SUPERUSER_NAME="admin"
+        SUPERUSER_EMAIL="admin@example.com"
+        SUPERUSER_PASS="$(sudo -u "$SYSTEM_USER" "$VENV_DIR/bin/python" - <<EOF
+import secrets, string
+alphabet = string.ascii_letters + string.digits
+print(''.join(secrets.choice(alphabet) for _ in range(12)))
 EOF
+)"
+
+        sudo -u "$SYSTEM_USER" bash <<EOF
+cd "$INSTALL_DIR"
+export DJANGO_SETTINGS_MODULE="config.settings"
+set -a; source .env; set +a
+${VENV_DIR}/bin/python manage.py shell <<PY
+from django.contrib.auth import get_user_model
+User = get_user_model()
+user, created = User.objects.get_or_create(username="$SUPERUSER_NAME")
+user.email = "$SUPERUSER_EMAIL"
+user.is_staff = True
+user.is_superuser = True
+user.set_password("$SUPERUSER_PASS")
+user.save()
+PY
+EOF
+
+        echo -e "\e[32m✓ Django superuser created successfully!\e[0m"
+        echo -e "\e[32mUsername: $SUPERUSER_NAME\e[0m"
+        echo -e "\e[32mPassword: $SUPERUSER_PASS\e[0m"
+    else
+        log_warning "You can create a superuser later with 'manage.py createsuperuser'"
+    fi
 }
 
 ########################################
@@ -318,6 +376,7 @@ setup_nginx() {
 ########################################
 main() {
     prompt_yes_no "Proceed with installation?" || exit 0
+    setup_ip_forwarding
     setup_project
     setup_system_user
     install_system_packages
@@ -326,6 +385,7 @@ main() {
     setup_venv
     setup_env
     setup_django
+    setup_superuser
     setup_supervisor
     setup_nginx
     log_success "Installation completed successfully"

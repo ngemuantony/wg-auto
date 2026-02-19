@@ -8,7 +8,7 @@
 #
 # Usage:
 #   sudo bash scripts/setup-sudoers.sh <username>
-#   Example: sudo bash scripts/setup-sudoers.sh www-data
+#   Example: sudo bash scripts/setup-sudoers.sh wg-auto
 #
 
 if [ "$EUID" -ne 0 ]; then
@@ -18,7 +18,7 @@ fi
 
 if [ -z "$1" ]; then
     echo "[ERROR] Usage: $0 <username>"
-    echo "Example: sudo bash $0 www-data"
+    echo "Example: sudo bash $0 wg-auto"
     exit 1
 fi
 
@@ -33,36 +33,31 @@ if ! id "$APP_USER" &>/dev/null; then
     exit 1
 fi
 
-# Ensure the sudoers file exists and define the command alias once
-if [ ! -f "$SUDOERS_FILE" ]; then
-    cat > "$SUDOERS_FILE" <<'EOF'
+# Create or update the sudoers file
+cat > "$SUDOERS_FILE" <<EOF
 # WireGuard Auto - Allow non-root users to run WireGuard commands without password
 # This allows the application to:
 # - Generate keys
 # - Inject/remove peers
 # - Query interface status
 # - Manage WireGuard interfaces
+Cmnd_Alias WG_COMMANDS = \
+    /usr/bin/wg, \
+    /usr/bin/wg-quick, \
+    /usr/bin/tee, \
+    /usr/bin/chmod
 
-Cmnd_Alias WG_COMMANDS = /usr/bin/wg, /usr/bin/wg-quick
+$APP_USER ALL=(root) NOPASSWD: WG_COMMANDS
 EOF
-fi
 
-# Add the user entry if it does not already exist
-if ! grep -q "^$APP_USER " "$SUDOERS_FILE"; then
-    echo "$APP_USER ALL=(ALL) NOPASSWD: WG_COMMANDS" >> "$SUDOERS_FILE"
-    echo "[INFO] Added $APP_USER to sudoers"
-else
-    echo "[INFO] User $APP_USER already has sudoers entry, skipping."
-fi
+# Set proper permissions
+chmod 0440 "$SUDOERS_FILE"
 
 # Validate sudoers syntax
 if ! visudo -c -f "$SUDOERS_FILE" &>/dev/null; then
     echo "[ERROR] Invalid sudoers syntax. Please check $SUDOERS_FILE manually."
     exit 1
 fi
-
-# Set proper permissions
-chmod 0440 "$SUDOERS_FILE"
 
 echo "[SUCCESS] Sudoers configuration completed at: $SUDOERS_FILE"
 echo ""
@@ -74,16 +69,13 @@ echo "    - wg pubkey        (derive public keys)"
 echo "    - wg show          (query interface status)"
 echo "    - wg set           (inject/remove peers live)"
 echo "    - wg-quick up/down (manage interfaces)"
+echo "    - tee              (write configs to /etc/wireguard)"
+echo "    - chmod            (set proper permissions on configs)"
 echo ""
+
 echo "[INFO] Testing sudoers configuration..."
 if sudo -u "$APP_USER" -n sudo wg show &>/dev/null 2>&1; then
-    echo "[SUCCESS] Configuration test passed! Commands should work."
+    echo "[SUCCESS] Configuration test passed! Commands should work without password."
 else
     echo "[WARNING] Test indicated potential issues. Please verify manually."
 fi
-
-# Check for common issues
-sudo visudo -c -f "$SUDOERS_FILE" &>/dev/null || {
-    echo "[ERROR] Sudoers file has syntax errors. Please fix $SUDOERS_FILE."
-    exit 1
-}

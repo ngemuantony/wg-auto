@@ -45,11 +45,12 @@ else:
     except ValueError:
         DEBUG = False
 
-#ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
-ALLOWED_HOSTS = ['*']
+# ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'tisp-server','10.10.10.1','10.10.10.2']
 
 # ── APPLICATIONS ─────────────────────────────────────────────────────────────
 INSTALLED_APPS = [
+    "grappelli",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -214,19 +215,6 @@ JAZZMIN_SETTINGS = {
         "wireguard.wireguardserver": "fas fa-server",
     },
 }
+# _______________ GRAPPELLI CONFIGURATION _______________
+GRAPPELLI_ADMIN_TITLE = "WG Auto Admin"
 
-JAZZMIN_UI_TWEAKS = {
-        "theme": "flatly",
-        "dark_mode_theme": "darkly",
-        "navbar": "navbar-dark",
-        "active_navbar": "bg-primary",
-        "accent": "accent-primary",
-    "button_classes": {
-        "primary": "btn-success",  # Green primary buttons
-        "secondary": "btn-secondary",
-        "info": "btn-info",
-        "warning": "btn-warning",  # Orange warning buttons
-        "danger": "btn-danger",
-        "success": "btn-success"
-    },
-}
