@@ -377,8 +377,8 @@ setup_nginx() {
 main() {
     prompt_yes_no "Proceed with installation?" || exit 0
     setup_ip_forwarding
-    setup_project
     setup_system_user
+    setup_project
     install_system_packages
     setup_postgres
     setup_redis
